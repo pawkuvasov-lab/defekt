@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Дефектная ведомость с фото</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
         * {
@@ -351,7 +350,6 @@
             line-height: 1;
         }
 
-        /* Специально для телефонов */
         @media (max-width: 600px) {
             body { padding: 6px; }
             .container { padding: 8px; border-radius: 12px; }
@@ -488,13 +486,11 @@
             rows.forEach((row, index) => {
                 const tr = document.createElement('tr');
 
-                // №
                 const td0 = document.createElement('td');
                 td0.style.textAlign = 'center';
                 td0.textContent = index + 1;
                 tr.appendChild(td0);
 
-                // Конструкция
                 const td1 = document.createElement('td');
                 const input1 = document.createElement('input');
                 input1.type = 'text';
@@ -506,7 +502,6 @@
                 td1.appendChild(input1);
                 tr.appendChild(td1);
 
-                // Дефект
                 const td2 = document.createElement('td');
                 const select = createDefectSelect(row.defect);
                 select.addEventListener('change', function(e) {
@@ -515,7 +510,6 @@
                 td2.appendChild(select);
                 tr.appendChild(td2);
 
-                // Фото
                 const td3 = document.createElement('td');
                 const photoDiv = document.createElement('div');
                 photoDiv.className = 'photo-cell';
@@ -620,7 +614,7 @@
             }
         };
 
-        // ========== ГЕНЕРАЦИЯ HTML ТАБЛИЦЫ ==========
+        // ========== ГЕНЕРАЦИЯ ТАБЛИЦЫ ДЛЯ PDF ==========
         function generateTableHTML() {
             let html = `
                 <h2>Дефектная ведомость</h2>
@@ -675,44 +669,137 @@
             document.body.style.overflow = '';
         };
 
-        // ========== СКАЧАТЬ PDF ==========
+        // ========== СКАЧАТЬ PDF (НОВЫЙ МЕТОД - БЕЗ CANVAS) ==========
         window.downloadPDF = function() {
-            const element = document.getElementById('previewTableWrap');
+            if (rows.length === 0) {
+                alert('Нет данных для экспорта');
+                return;
+            }
+
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF('p', 'mm', 'a4');
             
-            const style = document.createElement('style');
-            style.textContent = `
-                * { font-family: 'Times New Roman', Times, serif !important; }
-                table { font-family: 'Times New Roman', Times, serif !important; }
-                th, td { font-family: 'Times New Roman', Times, serif !important; }
-                h2 { font-family: 'Times New Roman', Times, serif !important; }
-                p { font-family: 'Times New Roman', Times, serif !important; }
-                .photo-img { max-width: 5cm !important; height: auto !important; }
-            `;
-            element.appendChild(style);
+            // Настройки страницы
+            const pageWidth = pdf.internal.pageSize.getWidth();
+            const pageHeight = pdf.internal.pageSize.getHeight();
+            const margin = 15;
+            const maxWidth = pageWidth - margin * 2;
             
-            html2canvas(element, {
-                scale: 2,
-                useCORS: true,
-                allowTaint: true,
-                backgroundColor: '#ffffff',
-                logging: false,
-                width: element.scrollWidth,
-                height: element.scrollHeight,
-                windowWidth: element.scrollWidth,
-                windowHeight: element.scrollHeight
-            }).then(function(canvas) {
-                const imgData = canvas.toDataURL('image/png');
-                const { jsPDF } = window.jspdf;
-                const pdf = new jsPDF('p', 'mm', 'a4');
-                const pdfWidth = pdf.internal.pageSize.getWidth();
-                const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-                
-                pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+            let yPos = margin;
+
+            // Функция для добавления текста
+            function addText(text, x, y, fontSize = 12, isBold = false) {
+                pdf.setFont('Times', isBold ? 'bold' : 'normal');
+                pdf.setFontSize(fontSize);
+                pdf.text(text, x, y);
+                return y + (fontSize * 0.35);
+            }
+
+            // Функция для добавления фото
+            function addImage(imgData, x, y, maxW) {
+                return new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = function() {
+                        const ratio = img.width / img.height;
+                        let w = maxW;
+                        let h = w / ratio;
+                        if (h > 40) {
+                            h = 40;
+                            w = h * ratio;
+                        }
+                        try {
+                            pdf.addImage(imgData, 'JPEG', x, y, w, h);
+                        } catch(e) {
+                            // Если JPEG не подходит, пробуем PNG
+                            pdf.addImage(imgData, 'PNG', x, y, w, h);
+                        }
+                        resolve(y + h + 2);
+                    };
+                    img.onerror = function() {
+                        resolve(y + 10);
+                    };
+                    img.src = imgData;
+                });
+            }
+
+            // Заголовок
+            yPos = addText('Дефектная ведомость', margin, yPos, 14, true);
+            yPos += 2;
+            yPos = addText('Дата: ' + new Date().toLocaleDateString(), margin, yPos, 12);
+            yPos += 6;
+
+            // Таблица
+            const col1 = 20;  // №
+            const col2 = 55;  // Конструкция
+            const col3 = 90;  // Дефект
+            const col4 = 130; // Фото
+            const colWidths = [15, 35, 35, 40];
+            const startX = margin;
+            const rowHeight = 10;
+
+            // Заголовки таблицы
+            pdf.setFillColor(217, 217, 217);
+            pdf.rect(startX, yPos - 4, maxWidth, rowHeight, 'F');
+            
+            pdf.setFont('Times', 'bold');
+            pdf.setFontSize(11);
+            pdf.text('№', startX + 5, yPos + 2);
+            pdf.text('Конструкция', startX + 25, yPos + 2);
+            pdf.text('Дефект', startX + 65, yPos + 2);
+            pdf.text('Фото', startX + 105, yPos + 2);
+            
+            pdf.setFont('Times', 'normal');
+            yPos += rowHeight;
+
+            // Данные
+            async function renderRows() {
+                for (let i = 0; i < rows.length; i++) {
+                    const row = rows[i];
+                    
+                    // Проверяем, нужно ли перенести на новую страницу
+                    if (yPos + 30 > pageHeight - margin) {
+                        pdf.addPage();
+                        yPos = margin + 5;
+                    }
+
+                    // Рисуем границы ячеек
+                    const rowY = yPos;
+                    
+                    // №
+                    pdf.rect(startX, rowY, 15, rowHeight);
+                    pdf.text(String(i + 1), startX + 5, rowY + 5);
+                    
+                    // Конструкция
+                    pdf.rect(startX + 15, rowY, 35, rowHeight);
+                    const constrText = row.construction || '';
+                    const constrLines = pdf.splitTextToSize(constrText, 33);
+                    pdf.text(constrLines, startX + 18, rowY + 5);
+                    
+                    // Дефект
+                    pdf.rect(startX + 50, rowY, 35, rowHeight);
+                    const defectText = row.defect || '';
+                    const defectLines = pdf.splitTextToSize(defectText, 33);
+                    pdf.text(defectLines, startX + 53, rowY + 5);
+                    
+                    // Фото
+                    pdf.rect(startX + 85, rowY, 40, rowHeight);
+                    if (row.photoData) {
+                        await addImage(row.photoData, startX + 88, rowY + 1, 36);
+                    } else {
+                        pdf.setFont('Times', 'italic');
+                        pdf.setFontSize(9);
+                        pdf.text('Нет фото', startX + 90, rowY + 6);
+                        pdf.setFont('Times', 'normal');
+                        pdf.setFontSize(11);
+                    }
+                    
+                    yPos += rowHeight;
+                }
+            }
+
+            // Запускаем рендеринг
+            renderRows().then(() => {
                 pdf.save('дефектная_ведомость.pdf');
-                element.removeChild(style);
-            }).catch(function(err) {
-                alert('Ошибка при создании PDF: ' + err.message);
-                element.removeChild(style);
             });
         };
 
